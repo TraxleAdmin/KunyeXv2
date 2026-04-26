@@ -26,6 +26,7 @@ import time
 import ctypes
 import qrcode
 import re
+import textwrap
 import difflib
 import uuid
 import random
@@ -48,7 +49,7 @@ from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from tkinterdnd2 import TkinterDnD, DND_FILES
 from pdf2image import convert_from_path
@@ -71,25 +72,62 @@ else:
     CURRENT_EXE_NAME = "KunyeX_Merkez.exe"
     TESSERACT_PATH = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
     POPPLER_PATH = r'C:\poppler\Library\bin'
-    LOGO_DIR = os.path.join(application_path, "..", "..")
+    LOGO_DIR = application_path
 
 BRANCH_NAME = CURRENT_EXE_NAME.replace("KunyeX_", "").replace(".exe", "").replace("_", " ")
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
-FIREBASE_URL = "{TARGET_FIREBASE_URL}"
+FIREBASE_URL = "https://kunyex-lisans-default-rtdb.europe-west1.firebasedatabase.app"
 
-ctk.set_appearance_mode("dark")
-BG_COLOR = "#313338"           
-SIDEBAR_COLOR = "#2B2D31"      
-SERVER_BAR_COLOR = "#1E1F22"   
-SURFACE_COLOR = "#2B2D31"      
-BORDER_COLOR = "#1E1F22"       
-ACCENT_COLOR = "#5865F2"       
-HOVER_ACCENT = "#4752C4"       
-DANGER_COLOR = "#DA373C"       
-SUCCESS_COLOR = "#23A559"      
-TEXT_COLOR = "#F2F3F5"         
-TEXT_MUTED = "#B5BAC1"         
-TRANSPARENT_KEY = "#010101"    
+THEME_PALETTES = {
+    "light": {
+        "BG_COLOR": "#F5F7FB",
+        "SIDEBAR_COLOR": "#EEF3F9",
+        "SERVER_BAR_COLOR": "#FFFFFF",
+        "SURFACE_COLOR": "#F7FAFD",
+        "CARD_COLOR": "#FFFFFF",
+        "CARD_ALT_COLOR": "#F3F7FC",
+        "INPUT_COLOR": "#F2F5FA",
+        "BORDER_COLOR": "#D6E0EC",
+        "ACCENT_COLOR": "#0A84FF",
+        "HOVER_ACCENT": "#0066CC",
+        "DANGER_COLOR": "#FF453A",
+        "DANGER_HOVER_COLOR": "#FFF1F2",
+        "SUCCESS_COLOR": "#34C759",
+        "TEXT_COLOR": "#0F172A",
+        "TEXT_SOFT": "#334155",
+        "TEXT_MUTED": "#64748B",
+        "PREVIEW_BG_COLOR": "#FBFDFF",
+    },
+    "dark": {
+        "BG_COLOR": "#0F1720",
+        "SIDEBAR_COLOR": "#131D29",
+        "SERVER_BAR_COLOR": "#101926",
+        "SURFACE_COLOR": "#162233",
+        "CARD_COLOR": "#182433",
+        "CARD_ALT_COLOR": "#1E2C3D",
+        "INPUT_COLOR": "#14202C",
+        "BORDER_COLOR": "#2A3A4C",
+        "ACCENT_COLOR": "#4DA3FF",
+        "HOVER_ACCENT": "#1D8BFF",
+        "DANGER_COLOR": "#FF6B6B",
+        "DANGER_HOVER_COLOR": "#392026",
+        "SUCCESS_COLOR": "#30D158",
+        "TEXT_COLOR": "#F8FAFC",
+        "TEXT_SOFT": "#D2DCE8",
+        "TEXT_MUTED": "#94A3B8",
+        "PREVIEW_BG_COLOR": "#0B111A",
+    },
+}
+TRANSPARENT_KEY = "#010101"
+
+def set_theme_palette(mode="light"):
+    palette = THEME_PALETTES.get(mode, THEME_PALETTES["light"])
+    # Custom palette kullanıyoruz; CTk'nin native dark modu özel pencere
+    # yapısıyla çakışıp siyah ekran etkisi oluşturabiliyor.
+    ctk.set_appearance_mode("light")
+    globals().update(palette)
+
+set_theme_palette("light")
 
 def get_hwid():
     return str(uuid.getnode())
@@ -263,6 +301,14 @@ def find_smart_price_match(pdf_title, stm_data):
         return best_price, "price"
         
     return "", "standard"
+
+def create_preview_placeholder(title="Onizleme hazir degil", detail="Kaynak islenirken bir sorun olustu.", size=(600, 404)):
+    image = Image.new("RGB", size, PREVIEW_BG_COLOR)
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((20, 20, size[0] - 20, size[1] - 20), radius=28, fill=CARD_COLOR, outline=BORDER_COLOR, width=2)
+    draw.text((42, 54), title, fill=TEXT_COLOR)
+    draw.text((42, 88), detail, fill=TEXT_MUTED)
+    return image
 
 class KunyeXPrintEngine:
     def __init__(self):
@@ -445,6 +491,8 @@ class KunyeXPrintEngine:
             return t.upper()
             
         title = tr_upper_title(ana_baslik)
+        title = re.sub(r'(?<!\s)\(', ' (', title)
+        title = re.sub(r'\s+', ' ', title).strip()
         
         if custom_font_size > 0:
             current_font_size = custom_font_size * scale_factor
@@ -457,28 +505,43 @@ class KunyeXPrintEngine:
         if layout_style == 'left':
             current_font_size -= 5 * scale_factor
             
+        font_name = custom_font_style
         try:
-            c.setFont(custom_font_style, current_font_size)
+            c.setFont(font_name, current_font_size)
         except:
-            c.setFont(self.font_bold, current_font_size)
-        
-        words = title.split()
-        lines = []
-        
-        if len(words) > 2:
-            lines.append(words[0])
-            lines.append(words[1])
-            if len(words) > 2:
-                lines.append(" ".join(words[2:]))
-        elif len(words) == 2:
-            lines.append(words[0])
-            lines.append(words[1])
-        elif "(" in title and ")" in title:
-            idx = title.find("(")
-            lines.append(title[:idx].strip())
-            lines.append(title[idx:].strip())
-        else:
-            lines.append(title)
+            font_name = self.font_bold
+            c.setFont(font_name, current_font_size)
+
+        def build_title_lines(font_size):
+            c.setFont(font_name, font_size)
+            max_line_width = (self.PAGE_WIDTH * 0.37) if layout_style == 'left' else (self.PAGE_WIDTH - (margin * 2) - (16 * scale_factor))
+            words = title.split()
+            if not words:
+                return [title], max_line_width
+
+            lines = []
+            current_line = words[0]
+            for word in words[1:]:
+                test_line = f"{current_line} {word}".strip()
+                if c.stringWidth(test_line, font_name, font_size) <= max_line_width:
+                    current_line = test_line
+                else:
+                    lines.append(current_line)
+                    current_line = word
+            if current_line:
+                lines.append(current_line)
+            if len(lines) > 3:
+                lines = lines[:2] + [" ".join(lines[2:])]
+            return lines, max_line_width
+
+        min_font_size = 28 * scale_factor if layout_style == 'left' else 30 * scale_factor
+        while current_font_size > min_font_size:
+            lines, max_line_width = build_title_lines(current_font_size)
+            if all(c.stringWidth(line, font_name, current_font_size) <= max_line_width for line in lines):
+                break
+            current_font_size -= 4 * scale_factor
+        c.setFont(font_name, current_font_size)
+        lines, max_line_width = build_title_lines(current_font_size)
             
         is_multiline = len(lines) > 1
         
@@ -625,6 +688,10 @@ class KunyeXPrintEngine:
 class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self):
         super().__init__()
+        self.theme_mode = "light"
+        set_theme_palette(self.theme_mode)
+        self.active_view = "login"
+        self._logo_image_cache = {}
         
         # --- MÜDAHALE: RIOT GAMES SPLASH EKRANI ---
         self.withdraw() 
@@ -646,8 +713,8 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
             img = Image.open(self.logo_png_path)
             w_percent = 400 / float(img.size[0])
             h_size = int((float(img.size[1]) * float(w_percent)))
-            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(400, h_size))
-            lbl = ctk.CTkLabel(self.splash, text="", image=ctk_img)
+            self.splash_logo_image = ctk.CTkImage(light_image=img, dark_image=img, size=(400, h_size))
+            lbl = ctk.CTkLabel(self.splash, text="", image=self.splash_logo_image)
             lbl.pack(expand=True)
         else:
             lbl = ctk.CTkLabel(self.splash, text="KÜNYEX", font=ctk.CTkFont(family="Helvetica", size=45, weight="bold"), text_color=ACCENT_COLOR)
@@ -693,6 +760,8 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         
         self._cached_preview_pil = None 
         self._cached_preview_ctk = None 
+        self._button_animation_tokens = {}
+        self._preview_refresh_running = False
         self.zoom_level = 1.0
         self.pan_x = 0
         self.pan_y = 0
@@ -713,7 +782,7 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         self.bind_all("<Control-a>", self._select_all)
         self.bind_all("<Control-A>", self._select_all)
         
-        self.build_custom_titlebar()
+        self.build_custom_titlebar_modern()
         self.print_engine = KunyeXPrintEngine()
         self.batch_jobs = [] 
         self.raw_pil_cache = []
@@ -730,10 +799,10 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         threading.Thread(target=self.check_for_updates_worker, daemon=True).start()
         
         if self.check_local_license():
-            self.after(10, self.transition_to_dashboard)
+            self.after(10, self.transition_to_dashboard_modern)
         else:
-            self.center_window(480, 460)
-            self.build_login_elements()
+            self.center_window(560, 520)
+            self.build_login_elements_modern()
             
         self.after(10, self.set_appwindow)
 
@@ -902,6 +971,172 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         else:
             self.attributes("-alpha", 1.0)
 
+    def bind_drag_targets(self, *widgets):
+        for widget in widgets:
+            widget.bind("<Button-1>", self.click_window)
+            widget.bind("<B1-Motion>", self.drag_window)
+
+    def build_status_chip(self, parent, text, color, text_color=None):
+        if text_color is None:
+            text_color = "#FFFFFF" if color in (ACCENT_COLOR, SUCCESS_COLOR, DANGER_COLOR) else TEXT_COLOR
+        return ctk.CTkLabel(
+            parent,
+            text=text,
+            fg_color=color,
+            text_color=text_color,
+            corner_radius=999,
+            padx=14,
+            pady=6,
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+        )
+
+    def build_section_header(self, parent, eyebrow, title, description, wraplength=340):
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        if eyebrow:
+            ctk.CTkLabel(
+                frame,
+                text=eyebrow,
+                font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+                text_color=ACCENT_COLOR,
+            ).pack(anchor="w")
+        if title:
+            ctk.CTkLabel(
+                frame,
+                text=title,
+                font=ctk.CTkFont(family="Segoe UI", size=24, weight="bold"),
+                text_color=TEXT_COLOR,
+            ).pack(anchor="w", pady=(4, 2))
+        if description:
+            ctk.CTkLabel(
+                frame,
+                text=description,
+                font=ctk.CTkFont(family="Segoe UI", size=11),
+                text_color=TEXT_MUTED,
+                justify="left",
+                wraplength=wraplength,
+            ).pack(anchor="w")
+        return frame
+
+    def get_logo_ctk_image(self, size):
+        logo_source = self.icon_path if os.path.exists(self.icon_path) else self.logo_png_path
+        if not os.path.exists(logo_source):
+            return None
+        key = (logo_source, tuple(size))
+        if key not in self._logo_image_cache:
+            pil_logo = Image.open(logo_source).convert("RGBA")
+            self._logo_image_cache[key] = ctk.CTkImage(light_image=pil_logo, dark_image=pil_logo, size=size)
+        return self._logo_image_cache[key]
+
+    def get_theme_toggle_label(self):
+        return "Koyu" if self.theme_mode == "light" else "Açık"
+
+    def clamp_text_lines(self, text, line_width=16, max_lines=3):
+        clean_text = " ".join(str(text).split())
+        if not clean_text:
+            return ""
+        wrapped = textwrap.wrap(clean_text, width=line_width, break_long_words=False, break_on_hyphens=False)
+        if len(wrapped) > max_lines:
+            wrapped = wrapped[:max_lines]
+            last_line = wrapped[-1].rstrip(" .,;:-")
+            if len(last_line) > max(6, line_width - 3):
+                last_line = last_line[:max(6, line_width - 3)].rstrip(" .,;:-")
+            wrapped[-1] = last_line + "..."
+        return "\n".join(wrapped)
+
+    def toggle_theme(self):
+        self.theme_mode = "dark" if self.theme_mode == "light" else "light"
+        set_theme_palette(self.theme_mode)
+        self.rebuild_current_view()
+
+    def rebuild_current_view(self):
+        reopen_editor = self.active_view == "dashboard" and self.editor_is_open and self.current_edit_idx >= 0
+        for widget_name in ("bottom_grip", "corner_grip", "content_container", "main_frame", "title_bar"):
+            widget = getattr(self, widget_name, None)
+            if widget is not None:
+                try:
+                    widget.destroy()
+                except:
+                    pass
+        self.bg_frame.configure(fg_color=BG_COLOR, border_color=BORDER_COLOR)
+        self.build_custom_titlebar_modern()
+        if self.active_view == "dashboard":
+            self.transition_to_dashboard_modern()
+            if reopen_editor and self.batch_jobs:
+                idx = min(self.current_edit_idx, len(self.batch_jobs) - 1)
+                self.after(80, lambda i=idx: self.toggle_editor_panel(True, i))
+        else:
+            self.center_window(560, 520)
+            self.build_login_elements_modern()
+
+    def mix_hex_color(self, start_hex, end_hex, ratio):
+        start_hex = start_hex.lstrip("#")
+        end_hex = end_hex.lstrip("#")
+        start_rgb = [int(start_hex[i:i+2], 16) for i in (0, 2, 4)]
+        end_rgb = [int(end_hex[i:i+2], 16) for i in (0, 2, 4)]
+        mixed = [round(start_rgb[idx] + ((end_rgb[idx] - start_rgb[idx]) * ratio)) for idx in range(3)]
+        return "#{:02X}{:02X}{:02X}".format(*mixed)
+
+    def animate_server_button(self, button, hover_color, border_color, hover=False, danger=False):
+        token = self._button_animation_tokens.get(button, 0) + 1
+        self._button_animation_tokens[button] = token
+        start_fg = button.cget("fg_color")
+        start_border = button.cget("border_color")
+        if isinstance(start_fg, tuple):
+            start_fg = start_fg[0]
+        if isinstance(start_border, tuple):
+            start_border = start_border[0]
+        end_fg = hover_color if hover else CARD_COLOR
+        end_border = border_color if hover else (DANGER_COLOR if danger else BORDER_COLOR)
+        start_radius = button.cget("corner_radius")
+        end_radius = 18 if hover else 16
+
+        def step(index, steps=4):
+            if self._button_animation_tokens.get(button) != token:
+                return
+            ratio = index / steps
+            button.configure(
+                fg_color=self.mix_hex_color(start_fg, end_fg, ratio),
+                border_color=self.mix_hex_color(start_border, end_border, ratio),
+                corner_radius=round(start_radius + ((end_radius - start_radius) * ratio)),
+            )
+            if index < steps:
+                self.after(18, lambda: step(index + 1, steps))
+
+        step(1)
+
+    def refresh_missing_previews_async(self):
+        if self._preview_refresh_running or not self.batch_jobs:
+            return
+        if not any(job.get("_preview_retry") for job in self.batch_jobs):
+            return
+        self._preview_refresh_running = True
+        threading.Thread(target=self.refresh_missing_previews_worker, daemon=True).start()
+
+    def refresh_missing_previews_worker(self):
+        current_size = self.selected_page_size.get()
+        refreshed_any = False
+        refreshed_indices = []
+        for idx, job in enumerate(self.batch_jobs):
+            if not job.get("_preview_retry"):
+                continue
+            try:
+                temp_name = f"preview_retry_{uuid.uuid4().hex[:8]}.pdf"
+                refreshed = self.print_engine.generate_preview_image(job, temp_name, current_size, dpi=72)
+                self.raw_pil_cache[idx] = refreshed
+                job["_preview_retry"] = False
+                refreshed_any = True
+                refreshed_indices.append(idx)
+            except Exception:
+                pass
+
+        self._preview_refresh_running = False
+        if refreshed_any:
+            def apply_refresh():
+                self.rebuild_gallery_ui()
+                if self.editor_is_open and self.current_edit_idx in refreshed_indices:
+                    self.load_editor_data()
+            self.after(0, apply_refresh)
+
     def minimize_app(self):
         hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
         ctypes.windll.user32.ShowWindow(hwnd, 6)
@@ -922,12 +1157,12 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
             base_bg = ACCENT_COLOR
         elif danger:
             highlight = DANGER_COLOR
-            hover_bg = "#3B1E1E"
+            hover_bg = DANGER_HOVER_COLOR
             base_bg = "transparent"
         else:
             highlight = ACCENT_COLOR
-            hover_bg = "#3A3A3D"
-            base_bg = "transparent"
+            hover_bg = CARD_ALT_COLOR
+            base_bg = CARD_COLOR if not is_btn else "transparent"
             
         
         def on_enter(e): 
@@ -959,18 +1194,29 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
     def show_about(self):
         abt = ctk.CTkToplevel(self)
         abt.title("Hakkında")
-        abt.geometry("400x250")
+        abt.geometry("430x340")
         abt.attributes("-topmost", True)
         abt.configure(fg_color=BG_COLOR)
         abt.grab_set() 
-        
-        ctk.CTkLabel(abt, text="KünyeX", font=("Helvetica", 24, "bold"), text_color=ACCENT_COLOR).pack(pady=(30, 5))
-        ctk.CTkLabel(abt, text=f"Sürüm: {self.APP_VERSION}", font=("Helvetica", 12), text_color=TEXT_MUTED).pack()
-        ctk.CTkLabel(abt, text="Programmed by Eray Evgin", font=("Helvetica", 14, "bold"), text_color=TEXT_COLOR).pack(pady=(20, 10))
-        
-        ctk.CTkLabel(abt, text="Tüm hakları saklıdır. İzinsiz kopyalanamaz.", font=("Helvetica", 10), text_color=TEXT_MUTED).pack(pady=(10, 20))
-        
-        ctk.CTkButton(abt, text="KAPAT", width=120, height=35, fg_color=SIDEBAR_COLOR, hover_color=BORDER_COLOR, command=abt.destroy).pack()
+
+        body = ctk.CTkFrame(abt, fg_color=CARD_COLOR, corner_radius=24, border_width=1, border_color=BORDER_COLOR)
+        body.pack(fill="both", expand=True, padx=18, pady=18)
+
+        logo_image = self.get_logo_ctk_image((88, 88))
+        if logo_image:
+            ctk.CTkLabel(body, text="", image=logo_image).pack(pady=(18, 10))
+
+        ctk.CTkLabel(body, text="KunyeX", font=("Helvetica", 24, "bold"), text_color=TEXT_COLOR).pack()
+        ctk.CTkLabel(body, text=f"Surum {self.APP_VERSION}", font=("Helvetica", 12), text_color=TEXT_MUTED).pack(pady=(4, 14))
+        ctk.CTkLabel(body, text="Traxle uygulama ekosistemi", font=("Helvetica", 14, "bold"), text_color=TEXT_COLOR).pack()
+        ctk.CTkLabel(body, text="www.traxleapp.com", font=("Helvetica", 12, "underline"), text_color=ACCENT_COLOR).pack(pady=(8, 6))
+        ctk.CTkLabel(body, text="Programmed by Eray Evgin", font=("Helvetica", 12), text_color=TEXT_SOFT).pack()
+        ctk.CTkLabel(body, text="Urun akisi, lisans ve etiket operasyonu bu merkezden yonetilir.", font=("Helvetica", 10), text_color=TEXT_MUTED, wraplength=320, justify="center").pack(pady=(12, 20))
+
+        action_row = ctk.CTkFrame(body, fg_color="transparent")
+        action_row.pack(pady=(0, 18))
+        ctk.CTkButton(action_row, text="Siteyi Ac", width=110, height=38, corner_radius=14, fg_color=ACCENT_COLOR, hover_color=HOVER_ACCENT, command=lambda: webbrowser.open("https://www.traxleapp.com")).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(action_row, text="Kapat", width=110, height=38, corner_radius=14, fg_color=CARD_ALT_COLOR, hover_color=INPUT_COLOR, text_color=TEXT_COLOR, command=abt.destroy).pack(side="left")
 
     def build_custom_titlebar(self):
         self.title_bar = ctk.CTkFrame(self.bg_frame, height=45, fg_color=SERVER_BAR_COLOR, corner_radius=12)
@@ -1033,6 +1279,570 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         
         self.status_label = ctk.CTkLabel(self.status_container, text="", font=ctk.CTkFont(family="Helvetica", size=11))
         self.status_label.pack(side="bottom", pady=2)
+
+    def build_custom_titlebar_modern(self):
+        if hasattr(self, "title_bar") and self.title_bar.winfo_exists():
+            self.title_bar.destroy()
+        self.title_bar = ctk.CTkFrame(
+            self.bg_frame,
+            height=52,
+            fg_color=SERVER_BAR_COLOR,
+            corner_radius=15,
+            border_width=1,
+            border_color=BORDER_COLOR,
+        )
+        self.title_bar.pack(side="top", fill="x", padx=6, pady=(6, 0))
+
+        left_cluster = ctk.CTkFrame(self.title_bar, fg_color="transparent")
+        left_cluster.pack(side="left", fill="y", padx=12, pady=8)
+
+        logo_image = self.get_logo_ctk_image((20, 20))
+        if logo_image:
+            brand_badge = ctk.CTkLabel(left_cluster, text="", image=logo_image)
+        else:
+            brand_badge = ctk.CTkLabel(
+                left_cluster,
+                text="KX",
+                width=20,
+                height=20,
+                corner_radius=10,
+                fg_color=ACCENT_COLOR,
+                text_color="#FFFFFF",
+                font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"),
+            )
+        brand_badge.pack(side="left", padx=(0, 7))
+
+        title_stack = ctk.CTkFrame(left_cluster, fg_color="transparent")
+        title_stack.pack(side="left")
+
+        self.logo_label = ctk.CTkLabel(
+            title_stack,
+            text=f"KunyeX | {BRANCH_NAME}",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            text_color=TEXT_COLOR,
+        )
+        self.logo_label.pack(anchor="w")
+
+        self.title_meta = ctk.CTkLabel(title_stack, text="", width=0, height=0)
+
+        self.theme_btn = ctk.CTkButton(
+            left_cluster,
+            text=self.get_theme_toggle_label(),
+            width=60,
+            height=28,
+            corner_radius=11,
+            fg_color=CARD_ALT_COLOR,
+            hover_color=INPUT_COLOR,
+            border_width=1,
+            border_color=BORDER_COLOR,
+            text_color=TEXT_COLOR,
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            command=self.toggle_theme,
+        )
+        self.theme_btn.pack(side="left", padx=(12, 0))
+
+        right_cluster = ctk.CTkFrame(self.title_bar, fg_color="transparent")
+        right_cluster.pack(side="right", fill="y", padx=8, pady=8)
+
+        session_chip = self.build_status_chip(right_cluster, "AKTİF OTURUM", CARD_ALT_COLOR)
+        session_chip.configure(padx=10, pady=4, font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"))
+        session_chip.pack(side="left", padx=(0, 8))
+
+        self.close_btn = ctk.CTkButton(
+            right_cluster,
+            text="✕",
+            width=30,
+            height=28,
+            corner_radius=9,
+            fg_color="transparent",
+            border_width=1,
+            border_color=BORDER_COLOR,
+            hover_color=DANGER_HOVER_COLOR,
+            text_color=TEXT_MUTED,
+            command=self.quit_app,
+        )
+        self.close_btn.pack(side="right", padx=(6, 0))
+
+        self.max_btn = ctk.CTkButton(
+            right_cluster,
+            text="▢",
+            width=30,
+            height=28,
+            corner_radius=9,
+            fg_color="transparent",
+            border_width=1,
+            border_color=BORDER_COLOR,
+            hover_color=CARD_ALT_COLOR,
+            text_color=TEXT_MUTED,
+            command=self.toggle_maximize_app,
+        )
+        self.max_btn.pack(side="right", padx=(6, 0))
+
+        self.min_btn = ctk.CTkButton(
+            right_cluster,
+            text="—",
+            width=30,
+            height=28,
+            corner_radius=9,
+            fg_color="transparent",
+            border_width=1,
+            border_color=BORDER_COLOR,
+            hover_color=CARD_ALT_COLOR,
+            text_color=TEXT_MUTED,
+            command=self.minimize_app,
+        )
+        self.min_btn.pack(side="right", padx=(6, 0))
+
+        self.bind_drag_targets(self.title_bar, left_cluster, brand_badge, title_stack, self.logo_label)
+
+    def build_login_elements_modern(self):
+        self.active_view = "login"
+        self.main_frame = ctk.CTkFrame(self.bg_frame, fg_color="transparent")
+        self.main_frame.pack(fill="both", expand=True, padx=28, pady=(14, 22))
+
+        auth_shell = ctk.CTkFrame(
+            self.main_frame,
+            fg_color=CARD_COLOR,
+            corner_radius=24,
+            border_width=1,
+            border_color=BORDER_COLOR,
+        )
+        auth_shell.pack(fill="both", expand=True, padx=8, pady=8)
+
+        hero_band = ctk.CTkFrame(auth_shell, fg_color=SURFACE_COLOR, corner_radius=22)
+        hero_band.pack(fill="x", padx=18, pady=(18, 14))
+
+        self.build_status_chip(hero_band, "KURUMSAL DOĞRULAMA", ACCENT_COLOR).pack(anchor="w", padx=18, pady=(18, 10))
+
+        self.header = ctk.CTkLabel(
+            hero_band,
+            text="Yetkilendirilmiş çalışma alanı",
+            font=ctk.CTkFont(family="SF Pro Display", size=28, weight="bold"),
+            text_color=TEXT_COLOR,
+        )
+        self.header.pack(anchor="w", padx=18)
+
+        self.subheader = ctk.CTkLabel(
+            hero_band,
+            text="Şubenize tanımlı lisans anahtarını girin, panel güvenli biçimde başlatılsın.",
+            font=ctk.CTkFont(family="SF Pro Text", size=12),
+            text_color=TEXT_MUTED,
+            justify="left",
+            wraplength=390,
+        )
+        self.subheader.pack(anchor="w", padx=18, pady=(6, 18))
+
+        chip_row = ctk.CTkFrame(auth_shell, fg_color="transparent")
+        chip_row.pack(fill="x", padx=18, pady=(0, 12))
+        self.build_status_chip(chip_row, "Şube eşleşmesi", CARD_ALT_COLOR).pack(side="left", padx=(0, 8))
+        self.build_status_chip(chip_row, "Cihaz güvenliği", CARD_ALT_COLOR).pack(side="left", padx=(0, 8))
+        self.build_status_chip(chip_row, "Sessiz açılış", CARD_ALT_COLOR).pack(side="left")
+
+        form_block = ctk.CTkFrame(auth_shell, fg_color="transparent")
+        form_block.pack(fill="x", padx=18, pady=(4, 0))
+
+        ctk.CTkLabel(
+            form_block,
+            text="ŞİFRELEME ANAHTARI",
+            font=ctk.CTkFont(family="SF Pro Text", size=11, weight="bold"),
+            text_color=TEXT_MUTED,
+        ).pack(anchor="w", pady=(0, 6))
+
+        self.serial_entry = ctk.CTkEntry(
+            form_block,
+            placeholder_text="KUNYEX-PRO-XXXX-XXXX",
+            width=350,
+            height=54,
+            font=ctk.CTkFont(family="SF Pro Display", size=16, weight="bold"),
+            justify="center",
+            fg_color=INPUT_COLOR,
+            border_color=BORDER_COLOR,
+            corner_radius=16,
+            text_color=TEXT_COLOR,
+        )
+        self.serial_entry.pack(fill="x", pady=(0, 12))
+        self.serial_entry.bind("<KeyRelease>", self.format_serial)
+        self.serial_entry.bind("<Return>", lambda e: self.start_verification())
+        self.add_focus_glow(self.serial_entry)
+
+        self.activate_btn = ctk.CTkButton(
+            form_block,
+            text="PANELE GİRİŞ YAP",
+            width=350,
+            height=52,
+            corner_radius=16,
+            fg_color=ACCENT_COLOR,
+            border_width=0,
+            hover_color=HOVER_ACCENT,
+            font=ctk.CTkFont(family="SF Pro Display", size=14, weight="bold"),
+            text_color="#FFFFFF",
+            command=self.start_verification,
+        )
+        self.activate_btn.pack(fill="x")
+
+        self.status_container = ctk.CTkFrame(auth_shell, fg_color="transparent", height=58, width=350)
+        self.status_container.pack_propagate(False)
+        self.status_container.pack(fill="x", padx=18, pady=(14, 16))
+
+        self.progress = ctk.CTkProgressBar(
+            self.status_container,
+            width=350,
+            height=5,
+            fg_color=INPUT_COLOR,
+            progress_color=ACCENT_COLOR,
+        )
+        self.progress.set(0)
+
+        self.status_label = ctk.CTkLabel(
+            self.status_container,
+            text="",
+            font=ctk.CTkFont(family="SF Pro Text", size=11),
+            text_color=TEXT_MUTED,
+        )
+        self.status_label.pack(side="bottom", pady=2)
+
+    def transition_to_dashboard_modern(self):
+        if hasattr(self, "content_container") and self.content_container.winfo_exists():
+            self.content_container.destroy()
+        if hasattr(self, "main_frame") and self.main_frame.winfo_exists():
+            self.main_frame.destroy()
+
+        self.active_view = "dashboard"
+        self.center_window(1440, 860)
+        self.title_meta.configure(text="")
+
+        self.content_container = ctk.CTkFrame(self.bg_frame, fg_color="transparent")
+        self.content_container.pack(fill="both", expand=True, padx=0, pady=(0, 8))
+
+        self.server_bar = ctk.CTkFrame(
+            self.content_container,
+            fg_color=SERVER_BAR_COLOR,
+            width=72,
+            corner_radius=0,
+            border_width=1,
+            border_color=BORDER_COLOR,
+        )
+        self.server_bar.pack(side="left", fill="y")
+        self.server_bar.pack_propagate(False)
+        ctk.CTkLabel(self.server_bar, text="ARAÇLAR", font=ctk.CTkFont(family="SF Pro Text", size=9, weight="bold"), text_color=TEXT_MUTED).pack(pady=(20, 14))
+
+        def add_server_btn(parent, text_icon, cmd, danger=False):
+            hover_bg = DANGER_HOVER_COLOR if danger else CARD_ALT_COLOR
+            border = DANGER_COLOR if danger else BORDER_COLOR
+            btn = ctk.CTkButton(
+                parent,
+                text=text_icon,
+                width=44,
+                height=44,
+                corner_radius=14,
+                fg_color=CARD_COLOR,
+                border_width=1,
+                border_color=border,
+                text_color=DANGER_COLOR if danger else TEXT_COLOR,
+                font=ctk.CTkFont(family="Segoe UI Symbol", size=17, weight="bold"),
+                hover_color=hover_bg,
+                cursor="hand2",
+                command=cmd,
+            )
+            btn.pack(pady=7)
+            btn.bind("<Enter>", lambda _e, b=btn, hb=hover_bg, br=border, dg=danger: self.animate_server_button(b, hb, br, True, dg))
+            btn.bind("<Leave>", lambda _e, b=btn, hb=hover_bg, br=border, dg=danger: self.animate_server_button(b, hb, br, False, dg))
+            return btn
+
+        add_server_btn(self.server_bar, "+", self.select_multiple_files)
+        add_server_btn(self.server_bar, "↻", self.fetch_price_data)
+        add_server_btn(self.server_bar, "i", self.show_about)
+        add_server_btn(self.server_bar, "×", self.clear_all_jobs, danger=True)
+
+        self.sidebar = ctk.CTkFrame(
+            self.content_container,
+            fg_color=SIDEBAR_COLOR,
+            width=326,
+            corner_radius=0,
+            border_width=1,
+            border_color=BORDER_COLOR,
+        )
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
+
+        self.left_grip = ctk.CTkFrame(self.sidebar, width=5, fg_color="transparent", cursor="sb_h_double_arrow")
+        self.left_grip.place(relx=0, rely=0, relheight=1)
+        self.left_grip.bind("<ButtonPress-1>", self.start_resize_left)
+        self.left_grip.bind("<B1-Motion>", self.resize_left)
+
+        header_wrap = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        header_wrap.pack(fill="x", padx=20, pady=(20, 12))
+        ctk.CTkLabel(header_wrap, text="KUNYEX", font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"), text_color=ACCENT_COLOR).pack(anchor="w")
+        ctk.CTkLabel(header_wrap, text="Merkez paneli", font=ctk.CTkFont(family="Segoe UI", size=23, weight="bold"), text_color=TEXT_COLOR).pack(anchor="w", pady=(4, 0))
+
+        branch_card = ctk.CTkFrame(self.sidebar, fg_color=CARD_COLOR, corner_radius=20, border_width=1, border_color=BORDER_COLOR)
+        branch_card.pack(fill="x", padx=20, pady=(0, 14))
+        self.build_status_chip(branch_card, "SEÇİLİ ŞUBE", CARD_ALT_COLOR).pack(anchor="w", padx=16, pady=(16, 8))
+        ctk.CTkLabel(branch_card, text=BRANCH_NAME, font=ctk.CTkFont(family="SF Pro Display", size=20, weight="bold"), text_color=TEXT_COLOR).pack(anchor="w", padx=16)
+        ctk.CTkLabel(branch_card, text="Şu anda açık olan merkez şubesi bu panel üzerinden yönetiliyor.", font=ctk.CTkFont(family="SF Pro Text", size=11), text_color=TEXT_MUTED, wraplength=250, justify="left").pack(anchor="w", padx=16, pady=(6, 16))
+
+        ctk.CTkLabel(self.sidebar, text="DOSYA ALANI", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"), text_color=TEXT_MUTED).pack(anchor="w", padx=20, pady=(0, 8))
+
+        self.dropzone = ctk.CTkFrame(self.sidebar, fg_color=CARD_COLOR, border_width=1, border_color=BORDER_COLOR, corner_radius=20, height=170, cursor="hand2")
+        self.dropzone.pack(fill="x", padx=20, pady=(0, 14))
+        self.dropzone.pack_propagate(False)
+
+        def d_enter(_):
+            self.dropzone.configure(border_color=ACCENT_COLOR)
+
+        def d_leave(_):
+            self.dropzone.configure(border_color=BORDER_COLOR)
+
+        self.dropzone.bind("<Enter>", d_enter)
+        self.dropzone.bind("<Leave>", d_leave)
+        self.dropzone.bind("<Button-1>", lambda _e: self.select_multiple_files())
+
+        drop_content = ctk.CTkFrame(self.dropzone, fg_color="transparent")
+        drop_content.pack(expand=True, fill="both", padx=16, pady=18)
+        lbl_drop_title = ctk.CTkLabel(
+            drop_content,
+            text="Dosyaları sürükleyip bırakın",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            text_color=TEXT_SOFT,
+            justify="center",
+            wraplength=210,
+        )
+        lbl_drop_title.pack(expand=True, pady=(10, 4))
+        lbl_drop_subtitle = ctk.CTkLabel(
+            drop_content,
+            text="veya seçmek için buraya tıklayın\nPDF, ODP, PNG ya da JPG açabilirsiniz",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            text_color=TEXT_MUTED,
+            justify="center",
+            wraplength=210,
+        )
+        lbl_drop_subtitle.pack(expand=True, pady=(0, 10))
+        for widget in (drop_content, lbl_drop_title, lbl_drop_subtitle):
+            widget.bind("<Enter>", d_enter)
+            widget.bind("<Leave>", d_leave)
+            widget.bind("<Button-1>", lambda _e: self.select_multiple_files())
+
+        self.drop_target_register(DND_FILES)
+        self.dnd_bind("<<Drop>>", self.on_files_dropped)
+
+        def on_drag_enter(_):
+            self.dropzone.configure(border_color=SUCCESS_COLOR, border_width=2)
+            lbl_drop_title.configure(text_color=SUCCESS_COLOR)
+
+        def on_drag_leave(_):
+            self.dropzone.configure(border_color=BORDER_COLOR, border_width=1)
+            lbl_drop_title.configure(text_color=TEXT_SOFT)
+
+        self.dnd_bind("<<DropEnter>>", on_drag_enter)
+        self.dnd_bind("<<DropLeave>>", on_drag_leave)
+
+        self.fetch_price_btn = ctk.CTkButton(
+            self.sidebar,
+            text="Fiyat Belleğini Yenile",
+            height=42,
+            corner_radius=16,
+            fg_color=CARD_COLOR,
+            border_width=1,
+            border_color=BORDER_COLOR,
+            hover_color=CARD_ALT_COLOR,
+            text_color=TEXT_COLOR,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            command=self.fetch_price_data,
+        )
+        self.fetch_price_btn.pack(fill="x", padx=20, pady=(0, 14))
+        self.add_hover_effect(self.fetch_price_btn, is_btn=True)
+
+        stat_card = ctk.CTkFrame(self.sidebar, fg_color=CARD_COLOR, corner_radius=20, border_width=1, border_color=BORDER_COLOR)
+        stat_card.pack(fill="x", padx=20, pady=(0, 14))
+        ctk.CTkLabel(stat_card, text="AKIŞ DURUMU", font=ctk.CTkFont(family="SF Pro Text", size=11, weight="bold"), text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=(16, 8))
+        self.stats_lbl = ctk.CTkLabel(stat_card, text="0 DOSYA", font=ctk.CTkFont(family="Segoe UI", size=26, weight="bold"), text_color=TEXT_COLOR)
+        self.stats_lbl.pack(anchor="w", padx=16)
+        self.status_text = ctk.CTkLabel(stat_card, text="Sistem Hazır", font=ctk.CTkFont(family="SF Pro Text", size=11), text_color=TEXT_MUTED, wraplength=260, justify="left")
+        self.status_text.pack(anchor="w", padx=16, pady=(6, 10))
+        self.process_progress = ctk.CTkProgressBar(stat_card, height=6, progress_color=ACCENT_COLOR, fg_color=INPUT_COLOR)
+        self.process_progress.pack(fill="x", padx=16, pady=(0, 16))
+        self.process_progress.set(0)
+
+        action_footer = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        action_footer.pack(side="bottom", fill="x", padx=20, pady=20)
+
+        self.master_print_btn = ctk.CTkButton(action_footer, text="Toplu PDF Oluştur", height=50, corner_radius=16, fg_color=SUCCESS_COLOR, hover_color="#28A84A", text_color="#FFFFFF", font=ctk.CTkFont(family="SF Pro Display", size=13, weight="bold"), command=self.open_print_options, state="disabled")
+        self.master_print_btn.pack(fill="x", pady=(0, 10))
+        self.add_hover_effect(self.master_print_btn, is_btn=True, primary=True)
+
+        self.load_memory_btn = ctk.CTkButton(action_footer, text="Geçmiş Künyeleri Getir", height=42, corner_radius=16, fg_color=CARD_COLOR, border_width=1, border_color=BORDER_COLOR, hover_color=CARD_ALT_COLOR, text_color=TEXT_COLOR, font=ctk.CTkFont(family="SF Pro Display", size=12, weight="bold"), command=self.load_memory_jobs)
+        self.load_memory_btn.pack(fill="x")
+        self.add_hover_effect(self.load_memory_btn, is_btn=True)
+
+        self.main_area = ctk.CTkFrame(self.content_container, fg_color=BG_COLOR, corner_radius=0)
+        self.main_area.pack(side="left", fill="both", expand=True)
+
+        self.toolbar = ctk.CTkFrame(self.main_area, height=68, fg_color=BG_COLOR, corner_radius=0, border_width=0)
+        self.toolbar.pack(side="top", fill="x", pady=0)
+        self.toolbar.pack_propagate(False)
+        ctk.CTkFrame(self.toolbar, height=1, fg_color=BORDER_COLOR).pack(side="bottom", fill="x")
+
+        toolbar_left = ctk.CTkFrame(self.toolbar, fg_color="transparent")
+        toolbar_left.pack(side="left", fill="both", expand=True, padx=22, pady=(14, 10))
+        ctk.CTkLabel(toolbar_left, text="Etiket galerisi", font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"), text_color=TEXT_COLOR).pack(anchor="w")
+
+        toolbar_right = ctk.CTkFrame(self.toolbar, fg_color="transparent")
+        toolbar_right.pack(side="right", padx=22, pady=(16, 10))
+        self.filter_seg = ctk.CTkSegmentedButton(toolbar_right, values=["TÜMÜ", "FİYATLILAR", "STANDART"], command=self.change_filter, selected_color=ACCENT_COLOR, selected_hover_color=HOVER_ACCENT, unselected_color=CARD_COLOR, unselected_hover_color=CARD_ALT_COLOR, text_color=TEXT_COLOR, font=ctk.CTkFont(family="SF Pro Display", size=12, weight="bold"))
+        self.filter_seg.set("TÜMÜ")
+        self.filter_seg.pack(side="right")
+
+        gallery_shell = ctk.CTkFrame(self.main_area, fg_color=CARD_ALT_COLOR, corner_radius=24, border_width=1, border_color=BORDER_COLOR)
+        gallery_shell.pack(fill="both", expand=True, padx=14, pady=14)
+
+        self.gallery_frame = ctk.CTkScrollableFrame(gallery_shell, fg_color="transparent", scrollbar_button_color=BORDER_COLOR, scrollbar_button_hover_color=ACCENT_COLOR)
+        self.gallery_frame.pack(fill="both", expand=True, padx=8, pady=8)
+
+        self.panel_relx = 1.5
+        self.right_panel = ctk.CTkFrame(self.content_container, fg_color=SIDEBAR_COLOR, width=470, corner_radius=0, border_width=1, border_color=BORDER_COLOR)
+        self.right_panel.pack_propagate(False)
+        self.right_panel.place(relx=self.panel_relx, rely=0, relheight=1.0, anchor="ne")
+
+        self.right_grip = ctk.CTkFrame(self.right_panel, width=5, fg_color="transparent", cursor="sb_h_double_arrow")
+        self.right_grip.place(relx=1.0, rely=0, relheight=1, anchor="ne")
+        self.right_grip.bind("<B1-Motion>", self.resize_right)
+
+        self.bottom_grip = ctk.CTkFrame(self.bg_frame, height=5, fg_color="transparent", cursor="sb_v_double_arrow")
+        self.bottom_grip.place(relx=0, rely=1.0, relwidth=1, anchor="sw")
+        self.bottom_grip.bind("<B1-Motion>", self.resize_bottom)
+
+        self.corner_grip = ctk.CTkFrame(self.bg_frame, width=15, height=15, fg_color="transparent", cursor="sizing")
+        self.corner_grip.place(relx=1.0, rely=1.0, anchor="se")
+        self.corner_grip.bind("<B1-Motion>", self.resize_corner)
+
+        editor_header = ctk.CTkFrame(self.right_panel, fg_color="transparent")
+        editor_header.pack(fill="x", padx=18, pady=(18, 10))
+        self.build_status_chip(editor_header, "DUZENLEME", CARD_ALT_COLOR).pack(anchor="w")
+        ctk.CTkLabel(editor_header, text="Etiket duzenleyici", font=ctk.CTkFont(family="SF Pro Display", size=22, weight="bold"), text_color=TEXT_COLOR).pack(anchor="w", pady=(8, 0))
+
+        self.ed_preview_frame = ctk.CTkFrame(self.right_panel, fg_color=CARD_COLOR, corner_radius=20, height=232, border_width=1, border_color=BORDER_COLOR)
+        self.ed_preview_frame.pack(fill="x", padx=18, pady=(0, 8))
+        self.ed_preview_frame.pack_propagate(False)
+
+        self.preview_canvas = ctk.CTkCanvas(self.ed_preview_frame, bg=PREVIEW_BG_COLOR, highlightthickness=0)
+        self.preview_canvas.pack(fill="both", expand=True, padx=6, pady=6)
+        self.preview_canvas.bind("<MouseWheel>", self.on_zoom)
+        self.preview_canvas.bind("<Button-4>", self.on_zoom)
+        self.preview_canvas.bind("<Button-5>", self.on_zoom)
+        self.preview_canvas.bind("<ButtonPress-1>", self.start_pan)
+        self.preview_canvas.bind("<B1-Motion>", self.do_pan)
+        self.preview_canvas.bind("<ButtonRelease-1>", self.stop_pan)
+
+        zoom_frame = ctk.CTkFrame(self.right_panel, fg_color=CARD_COLOR, corner_radius=18, border_width=1, border_color=BORDER_COLOR)
+        zoom_frame.pack(fill="x", padx=18, pady=(0, 10))
+        ctk.CTkLabel(zoom_frame, text="Onizleme", font=ctk.CTkFont(family="SF Pro Text", size=11, weight="bold"), text_color=TEXT_MUTED).pack(side="left", padx=14, pady=12)
+        self.zoom_slider = ctk.CTkSlider(zoom_frame, from_=0.5, to=3.0, progress_color=ACCENT_COLOR, button_color=ACCENT_COLOR, command=self.on_slider_zoom)
+        self.zoom_slider.set(1.0)
+        self.zoom_slider.pack(side="left", fill="x", expand=True, padx=(0, 14), pady=12)
+
+        self.editor_tabs = ctk.CTkTabview(self.right_panel, fg_color="transparent", segmented_button_fg_color=CARD_COLOR, segmented_button_selected_color=ACCENT_COLOR, segmented_button_selected_hover_color=HOVER_ACCENT, segmented_button_unselected_hover_color=CARD_ALT_COLOR, text_color=TEXT_COLOR)
+        self.editor_tabs.pack(fill="both", expand=True, padx=12, pady=(0, 4))
+
+        tab_gorunum = self.editor_tabs.add("Etiket Tasarımı")
+        tab_kunye = self.editor_tabs.add("Künye Alanları")
+
+        self.scroll_gorunum = ctk.CTkScrollableFrame(tab_gorunum, fg_color="transparent", scrollbar_button_color=BORDER_COLOR, scrollbar_button_hover_color=ACCENT_COLOR)
+        self.scroll_gorunum.pack(fill="both", expand=True, padx=0, pady=0)
+
+        def create_label_g(text):
+            ctk.CTkLabel(self.scroll_gorunum, text=text, font=ctk.CTkFont(family="SF Pro Text", size=11, weight="bold"), text_color=TEXT_MUTED).pack(anchor="w", padx=10)
+
+        create_label_g("KÜNYE KONUMU")
+        self.ed_layout_seg = ctk.CTkSegmentedButton(self.scroll_gorunum, values=["Künye Altta", "Künye Solda"], selected_color=ACCENT_COLOR, unselected_color=CARD_COLOR, unselected_hover_color=CARD_ALT_COLOR, text_color=TEXT_COLOR)
+        self.ed_layout_seg.pack(fill="x", padx=10, pady=(5, 15))
+
+        self.ed_type_seg = ctk.CTkSegmentedButton(self.scroll_gorunum, values=["Standart Etiket", "Fiyatlı Etiket"], selected_color=ACCENT_COLOR, unselected_color=CARD_COLOR, unselected_hover_color=CARD_ALT_COLOR, text_color=TEXT_COLOR)
+        self.ed_type_seg.pack(fill="x", padx=10, pady=(0, 15))
+
+        create_label_g("ÜRÜN İSMİ")
+        self.ed_name = ctk.CTkEntry(self.scroll_gorunum, height=38, fg_color=INPUT_COLOR, border_color=BORDER_COLOR, text_color=TEXT_COLOR)
+        self.ed_name.pack(fill="x", padx=10, pady=(0, 15))
+
+        create_label_g("BİRİM")
+        self.ed_unit = ctk.CTkEntry(self.scroll_gorunum, height=38, fg_color=INPUT_COLOR, border_color=BORDER_COLOR, text_color=TEXT_COLOR)
+        self.ed_unit.pack(fill="x", padx=10, pady=(0, 15))
+
+        self.price_group = ctk.CTkFrame(self.scroll_gorunum, fg_color="transparent")
+        ctk.CTkLabel(self.price_group, text="FİYAT", font=ctk.CTkFont(family="SF Pro Text", size=11, weight="bold"), text_color=TEXT_MUTED).pack(anchor="w", padx=10)
+        self.ed_price = ctk.CTkEntry(self.price_group, height=40, font=("SF Pro Display", 14, "bold"), text_color=SUCCESS_COLOR, fg_color=INPUT_COLOR, border_color=BORDER_COLOR)
+        self.ed_price.pack(fill="x", padx=10, pady=(0, 15))
+        ctk.CTkLabel(self.price_group, text="FİYAT BOYUTU", font=ctk.CTkFont(family="SF Pro Text", size=11, weight="bold"), text_color=TEXT_MUTED).pack(anchor="w", padx=10)
+        self.ed_price_size = ctk.CTkSlider(self.price_group, from_=40, to=180, progress_color=ACCENT_COLOR, button_color=ACCENT_COLOR)
+        self.ed_price_size.pack(fill="x", padx=10, pady=(0, 15))
+        ctk.CTkLabel(self.price_group, text="FİYAT Y-EKSENİ", font=ctk.CTkFont(family="SF Pro Text", size=11, weight="bold"), text_color=TEXT_MUTED).pack(anchor="w", padx=10)
+        self.ed_price_y = ctk.CTkSlider(self.price_group, from_=-50, to=50, progress_color=ACCENT_COLOR, button_color=ACCENT_COLOR)
+        self.ed_price_y.pack(fill="x", padx=10, pady=(0, 15))
+
+        create_label_g("YAZI TİPİ")
+        self.ed_font = ctk.CTkOptionMenu(self.scroll_gorunum, values=["Arial-Black", "Arial-Bold", "Helvetica-Bold"], fg_color=INPUT_COLOR, button_color="#E2E8F0", text_color=TEXT_COLOR, button_hover_color=CARD_ALT_COLOR)
+        self.ed_font.pack(fill="x", padx=10, pady=(0, 15))
+
+        create_label_g("BAŞLIK BOYUTU")
+        self.ed_size = ctk.CTkSlider(self.scroll_gorunum, from_=20, to=150, progress_color=ACCENT_COLOR, button_color=ACCENT_COLOR)
+        self.ed_size.pack(fill="x", padx=10, pady=(0, 15))
+        create_label_g("BAŞLIK Y-EKSENİ")
+        self.ed_title_y = ctk.CTkSlider(self.scroll_gorunum, from_=-20, to=20, progress_color=ACCENT_COLOR, button_color=ACCENT_COLOR)
+        self.ed_title_y.pack(fill="x", padx=10, pady=(0, 15))
+        create_label_g("BİRİM BOYUTU")
+        self.ed_unit_size = ctk.CTkSlider(self.scroll_gorunum, from_=20, to=120, progress_color=ACCENT_COLOR, button_color=ACCENT_COLOR)
+        self.ed_unit_size.pack(fill="x", padx=10, pady=(0, 15))
+        create_label_g("BİRİM Y-EKSENİ")
+        self.ed_unit_y = ctk.CTkSlider(self.scroll_gorunum, from_=-20, to=20, progress_color=ACCENT_COLOR, button_color=ACCENT_COLOR)
+        self.ed_unit_y.pack(fill="x", padx=10, pady=(0, 15))
+        create_label_g("LOGO Y-EKSENİ")
+        self.ed_logo_y = ctk.CTkSlider(self.scroll_gorunum, from_=-20, to=20, progress_color=ACCENT_COLOR, button_color=ACCENT_COLOR)
+        self.ed_logo_y.pack(fill="x", padx=10, pady=(0, 20))
+
+        self.scroll_kunye = ctk.CTkScrollableFrame(tab_kunye, fg_color="transparent", scrollbar_button_color=BORDER_COLOR, scrollbar_button_hover_color=ACCENT_COLOR)
+        self.scroll_kunye.pack(fill="both", expand=True, padx=0, pady=0)
+
+        def create_label_k(text):
+            ctk.CTkLabel(self.scroll_kunye, text=text, font=ctk.CTkFont(family="SF Pro Text", size=11, weight="bold"), text_color=TEXT_MUTED).pack(anchor="w", padx=10)
+
+        create_label_k("KÜNYE NO")
+        self.ed_kno = ctk.CTkEntry(self.scroll_kunye, height=38, fg_color=INPUT_COLOR, border_color=BORDER_COLOR, text_color=ACCENT_COLOR, font=("SF Pro Display", 12, "bold"))
+        self.ed_kno.pack(fill="x", padx=10, pady=(0, 15))
+
+        self.ed_ocr_entries = {}
+        for k in ["Bildirim Tarihi", "Malın Cinsi", "Malın Türü", "Üretildiği Yer", "Gideceği Yer", "Üretici", "Sahibi", "Bildirimci", "Miktar", "Plaka"]:
+            create_label_k(k.upper())
+            ent = ctk.CTkEntry(self.scroll_kunye, height=38, fg_color=INPUT_COLOR, border_color=BORDER_COLOR, text_color=TEXT_COLOR)
+            ent.pack(fill="x", padx=10, pady=(0, 15))
+            ent.bind("<KeyRelease>", self.schedule_preview)
+            self.ed_ocr_entries[k] = ent
+
+        self.ed_action_frame = ctk.CTkFrame(self.right_panel, fg_color="transparent")
+        self.ed_action_frame.pack(side="bottom", fill="x", padx=18, pady=18)
+        self.ed_save_btn = ctk.CTkButton(self.ed_action_frame, text="Değişiklikleri Kaydet", height=44, corner_radius=16, fg_color=ACCENT_COLOR, hover_color=HOVER_ACCENT, command=self.save_editor)
+        self.ed_save_btn.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.ed_close_btn = ctk.CTkButton(self.ed_action_frame, text="Kapat", width=92, height=44, corner_radius=16, fg_color=CARD_COLOR, border_width=1, border_color=BORDER_COLOR, hover_color=CARD_ALT_COLOR, text_color=TEXT_COLOR, command=lambda: self.toggle_editor_panel(False))
+        self.ed_close_btn.pack(side="right")
+
+        for widget in [self.ed_name, self.ed_unit, self.ed_price, self.ed_kno]:
+            self.add_focus_glow(widget)
+        for ent in self.ed_ocr_entries.values():
+            self.add_focus_glow(ent)
+
+        self.ed_type_seg.configure(command=self.toggle_price_ui)
+        self.ed_layout_seg.configure(command=self.schedule_preview)
+        self.ed_name.bind("<KeyRelease>", self.schedule_preview)
+        self.ed_unit.bind("<KeyRelease>", self.schedule_preview)
+        self.ed_price.bind("<KeyRelease>", self.schedule_preview)
+        self.ed_kno.bind("<KeyRelease>", self.schedule_preview)
+        self.ed_size.configure(command=self.schedule_preview)
+        self.ed_title_y.configure(command=self.schedule_preview)
+        self.ed_price_size.configure(command=self.schedule_preview)
+        self.ed_price_y.configure(command=self.schedule_preview)
+        self.ed_unit_size.configure(command=self.schedule_preview)
+        self.ed_unit_y.configure(command=self.schedule_preview)
+        self.ed_logo_y.configure(command=self.schedule_preview)
+        self.ed_font.configure(command=self.schedule_preview)
+        self.preview_timer = None
 
     def format_serial(self, event):
         if getattr(event, 'keysym', '') in ('BackSpace', 'Delete', 'Left', 'Right', 'Up', 'Down', 'Control_L', 'Control_R', 'c', 'v', 'a', 'x', 'Return', 'Shift_L', 'Shift_R'):
@@ -1148,7 +1958,7 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         self.progress.configure(progress_color=SUCCESS_COLOR)
         self.activate_btn.configure(fg_color=SUCCESS_COLOR, text="SİSTEM AKTİF", text_color="#FFFFFF", border_width=0)
         self.show_status("Bağlantı güvenli.", SUCCESS_COLOR)
-        self.after(1000, self.transition_to_dashboard)
+        self.after(1000, self.transition_to_dashboard_modern)
 
     def resize_right(self, event):
         new_w = self.winfo_pointerx() - self.winfo_rootx()
@@ -1454,6 +2264,7 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         self.schedule_preview()
 
     def toggle_editor_panel(self, show=True, job_idx=-1):
+        state_changed = self.editor_is_open != show
         if show:
             self.current_edit_idx = job_idx
             self.load_editor_data()
@@ -1462,6 +2273,8 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         else:
             self.editor_is_open = False
             self.animate_panel(1.5)
+        if state_changed:
+            self.rebuild_gallery_ui()
 
     def animate_panel(self, target_relx):
         try:
@@ -1567,6 +2380,7 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         self.pan_x = 0
         self.pan_y = 0
         
+        self.preview_canvas.configure(bg=PREVIEW_BG_COLOR)
         self.preview_canvas.delete("all")
         self._cached_preview_image = None
         self.preview_canvas.create_text(180, 100, text="Yükleniyor...", fill=TEXT_MUTED, font=("Helvetica", 12))
@@ -1583,6 +2397,7 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def update_preview_ui(self, pil_img):
         self._cached_preview_pil = pil_img
+        self.preview_canvas.configure(bg=PREVIEW_BG_COLOR)
         self.redraw_canvas()
 
     def redraw_canvas(self):
@@ -1632,7 +2447,7 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
     def start_pan(self, event):
         self.is_panning = True
         self.pan_start_x = event.x - self.pan_x
-        self.pan_start_y = event.y - self.pan_start_y
+        self.pan_start_y = event.y - self.pan_y
 
     def do_pan(self, event):
         if self.is_panning:
@@ -1682,10 +2497,8 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
                 new_pil = self.print_engine.generate_preview_image(temp_job, temp_name, "600x404", dpi=100)
                 self.after(0, lambda p=new_pil: self.update_preview_ui(p))
             except Exception as e:
-                # 🔥 MÜDAHALE: Motor çökerse yutma, ekrana kırmızıyla bas!
                 err_msg = str(e).replace('\n', ' ')
-                self.after(0, lambda: self.preview_canvas.delete("all"))
-                self.after(0, lambda: self.preview_canvas.create_text(180, 100, text=f"MOTOR ÇÖKTÜ (Poppler Eksik):\n{err_msg[:45]}...", fill=DANGER_COLOR, font=("Helvetica", 11, "bold")))
+                self.after(0, lambda: self.update_preview_ui(create_preview_placeholder("Onizleme olusturulamadi", err_msg[:52])))
                 
         threading.Thread(target=worker, daemon=True).start()
         
@@ -1783,13 +2596,15 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
                 try:
                     temp_name = f"preview_{uuid.uuid4().hex[:8]}.pdf"
                     preview_pil = self.print_engine.generate_preview_image(job_data, temp_name, current_size, dpi=72)
+                    job_data["_preview_retry"] = False
                     self.raw_pil_cache.append(preview_pil)
                 except Exception:
-                    self.raw_pil_cache.append(Image.new('RGB', (600, 404), color=(43, 45, 49)))
+                    job_data["_preview_retry"] = True
+                    self.raw_pil_cache.append(create_preview_placeholder("Kayitli onizleme yok", "Hafiza kaydi yeniden uretilemedi."))
                     
                 loaded_count[0] += 1
                 
-            self.after(0, lambda: [self.update_stats(), self.rebuild_gallery_ui(), self.status_text.configure(text=f"Hafızadan {loaded_count[0]} künye getirildi.", text_color=SUCCESS_COLOR)])
+            self.after(0, lambda: [self.update_stats(), self.rebuild_gallery_ui(), self.status_text.configure(text=f"Hafızadan {loaded_count[0]} künye getirildi.", text_color=SUCCESS_COLOR), self.refresh_missing_previews_async()])
             
         threading.Thread(target=loader_worker, daemon=True).start()
 
@@ -1855,9 +2670,10 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
                 try:
                     temp_name = f"prev_{random.randint(1000,9999)}.pdf"
                     new_pil = self.print_engine.generate_preview_image(job, temp_name, current_size, dpi=72)
+                    job["_preview_retry"] = False
                     self.raw_pil_cache[idx] = new_pil
                 except Exception:
-                    pass
+                    job["_preview_retry"] = True
             except: pass
             
             p = (idx + 1) / total
@@ -1870,7 +2686,9 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         self.update_stats()
         self.rebuild_gallery_ui()
         self.status_text.configure(text="Eşleştirme tamamlandı.")
-        
+        self.refresh_missing_previews_async()
+        self.after(350, self.refresh_missing_previews_async)
+
         if self.editor_is_open and self.current_edit_idx != -1:
             self.load_editor_data()
 
@@ -2143,9 +2961,11 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
                     try:
                         temp_name = f"preview_{uuid.uuid4().hex[:8]}.pdf"
                         preview_pil = self.print_engine.generate_preview_image(job_data, temp_name, current_size, dpi=72)
+                        job_data["_preview_retry"] = False
                         local_results.append({'job': job_data, 'pil': preview_pil})
                     except Exception:
-                        local_results.append({'job': job_data, 'pil': Image.new('RGB', (600, 404), color=(43, 45, 49))})
+                        job_data["_preview_retry"] = True
+                        local_results.append({'job': job_data, 'pil': create_preview_placeholder("Onizleme hazirlanamadi", "Kaynak belge render edilemedi.")})
 
                 elif file_path.lower().endswith('.pdf'):
                     images_for_crop = None
@@ -2264,9 +3084,11 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
                                 try:
                                     temp_name = f"preview_{uuid.uuid4().hex[:8]}.pdf"
                                     preview_pil = self.print_engine.generate_preview_image(job_data, temp_name, current_size, dpi=72)
+                                    job_data["_preview_retry"] = False
                                     local_results.append({'job': job_data, 'pil': preview_pil})
                                 except Exception:
-                                    local_results.append({'job': job_data, 'pil': Image.new('RGB', (600, 404), color=(43, 45, 49))})
+                                    job_data["_preview_retry"] = True
+                                    local_results.append({'job': job_data, 'pil': create_preview_placeholder("Onizleme hazirlanamadi", "Sayfa render edilirken sorun olustu.")})
 
             except Exception:
                 pass
@@ -2301,6 +3123,8 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         self.update_stats()
         self.rebuild_gallery_ui()
         self.status_text.configure(text="Dosyalar hazır.")
+        self.refresh_missing_previews_async()
+        self.after(350, self.refresh_missing_previews_async)
 
     def remove_job(self, index):
         if 0 <= index < len(self.batch_jobs):
@@ -2323,9 +3147,11 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         
         if self.view_mode == "grid":
             # 🔥 MÜDAHALE: Taşmayı engellemek için kart ölçüleri 1400px ekrana optimize edildi
-            img_w, img_h = 210, 140  
+            img_w, img_h = 210, 140
             max_cols = 3 if self.editor_is_open else 4
             card_padx = 10
+            for grid_col in range(max_cols):
+                self.gallery_frame.grid_columnconfigure(grid_col, weight=1, uniform="gallery")
             
             for idx, job in enumerate(self.batch_jobs):
                 if self.current_filter == "FİYATLILAR" and job['label_type'] != 'price':
@@ -2334,16 +3160,17 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
                     continue
 
                 pil_image = self.raw_pil_cache[idx]
-                title_text = str(job['ana_baslik'])
+                title_text = self.clamp_text_lines(job['ana_baslik'], line_width=16, max_lines=3)
                 
                 base_border = DANGER_COLOR if job.get('label_type') == 'price' else BORDER_COLOR
                 
-                card = ctk.CTkFrame(self.gallery_frame, fg_color=SIDEBAR_COLOR, corner_radius=10, border_width=1, border_color=base_border)
+                card = ctk.CTkFrame(self.gallery_frame, fg_color=CARD_COLOR, width=232, height=286, corner_radius=18, border_width=1, border_color=base_border)
+                card.grid_propagate(False)
                 
                 # 🔥 MÜDAHALE: Silikon Vadisi Glow Efekti
                 self.add_hover_effect(card, base_border_color=base_border)
                 
-                card.grid(row=row, column=col, padx=card_padx, pady=card_padx, sticky="nsew")
+                card.grid(row=row, column=col, padx=card_padx, pady=card_padx, sticky="n")
                 self.gallery_cards.append(card)
                 
                 ctk_img = ctk.CTkImage(light_image=pil_image, dark_image=pil_image, size=(img_w, img_h))
@@ -2351,17 +3178,17 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
                 img_lbl.image = ctk_img 
                 img_lbl.pack(pady=(img_h*0.05, img_h*0.03), padx=img_w*0.05)
                 
-                title_font_size = 12
-                txt_lbl = ctk.CTkLabel(card, text=title_text[:22], font=ctk.CTkFont(family="Helvetica", size=12, weight="bold"), text_color=TEXT_COLOR)
-                txt_lbl.pack(pady=(0, 5))
+                txt_lbl = ctk.CTkLabel(card, text=title_text, height=52, wraplength=176, justify="center", font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"), text_color=TEXT_COLOR)
+                txt_lbl.pack(pady=(0, 4), padx=10)
+                ctk.CTkLabel(card, text=f"Künye: {job.get('kunye_no', 'N/A')}", font=ctk.CTkFont(family="SF Pro Text", size=10), text_color=TEXT_MUTED).pack(pady=(0, 8))
                 
                 btn_frame = ctk.CTkFrame(card, fg_color="transparent")
-                btn_frame.pack(pady=(0, 10))
+                btn_frame.pack(side="bottom", pady=(0, 12))
                 
                 edit_btn = ctk.CTkButton(btn_frame, text="DÜZENLE", width=90, height=28, corner_radius=6, fg_color=ACCENT_COLOR, hover_color=HOVER_ACCENT, text_color="#FFFFFF", font=ctk.CTkFont(family="Helvetica", size=10, weight="bold"), command=lambda i=idx: self.toggle_editor_panel(True, i))
                 edit_btn.pack(side="left", padx=3)
                 
-                remove_btn = ctk.CTkButton(btn_frame, text="SİL", width=50, height=28, corner_radius=6, fg_color="transparent", border_width=1, border_color=DANGER_COLOR, hover_color="#3B1E1E", text_color=DANGER_COLOR, font=ctk.CTkFont(family="Helvetica", size=10, weight="bold"), command=lambda i=idx: self.remove_job(i))
+                remove_btn = ctk.CTkButton(btn_frame, text="SİL", width=50, height=28, corner_radius=6, fg_color="transparent", border_width=1, border_color=DANGER_COLOR, hover_color=DANGER_HOVER_COLOR, text_color=DANGER_COLOR, font=ctk.CTkFont(family="Helvetica", size=10, weight="bold"), command=lambda i=idx: self.remove_job(i))
                 remove_btn.pack(side="left", padx=3)
 
                 col += 1
@@ -2377,11 +3204,11 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
                     continue
 
                 pil_image = self.raw_pil_cache[idx]
-                title_text = str(job['ana_baslik'])
+                title_text = self.clamp_text_lines(job['ana_baslik'], line_width=28, max_lines=2)
                 
                 base_border = DANGER_COLOR if job.get('label_type') == 'price' else BORDER_COLOR
                 
-                card = ctk.CTkFrame(self.gallery_frame, fg_color=SIDEBAR_COLOR, height=100, corner_radius=10, border_width=1, border_color=base_border)
+                card = ctk.CTkFrame(self.gallery_frame, fg_color=CARD_COLOR, height=108, corner_radius=18, border_width=1, border_color=base_border)
                 self.add_hover_effect(card, base_border_color=base_border)
                 card.pack(fill="x", padx=10, pady=5)
                 card.pack_propagate(False)
@@ -2395,7 +3222,7 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
                 info_frame = ctk.CTkFrame(card, fg_color="transparent")
                 info_frame.pack(side="left", fill="both", expand=True, padx=10, pady=20)
                 
-                ctk.CTkLabel(info_frame, text=title_text, font=ctk.CTkFont(family="Helvetica", size=14, weight="bold"), text_color=TEXT_COLOR, anchor="w").pack(fill="x")
+                ctk.CTkLabel(info_frame, text=title_text, wraplength=420, justify="left", font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"), text_color=TEXT_COLOR, anchor="w").pack(fill="x")
                 ctk.CTkLabel(info_frame, text=f"KÜNYE: {job.get('kunye_no', 'N/A')}", font=ctk.CTkFont(family="Helvetica", size=11), text_color=TEXT_MUTED, anchor="w").pack(fill="x", pady=(2,0))
                 
                 btn_frame = ctk.CTkFrame(card, fg_color="transparent")
@@ -2404,7 +3231,7 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
                 edit_btn = ctk.CTkButton(btn_frame, text="DÜZENLE", width=90, height=32, corner_radius=6, fg_color=ACCENT_COLOR, hover_color=HOVER_ACCENT, text_color="#FFFFFF", font=ctk.CTkFont(family="Helvetica", size=11, weight="bold"), command=lambda i=idx: self.toggle_editor_panel(True, i))
                 edit_btn.pack(side="left", padx=5)
                 
-                remove_btn = ctk.CTkButton(btn_frame, text="SİL", width=60, height=32, corner_radius=6, fg_color="transparent", border_width=1, border_color=DANGER_COLOR, hover_color="#3B1E1E", text_color=DANGER_COLOR, font=ctk.CTkFont(family="Helvetica", size=11, weight="bold"), command=lambda i=idx: self.remove_job(i))
+                remove_btn = ctk.CTkButton(btn_frame, text="SİL", width=60, height=32, corner_radius=6, fg_color="transparent", border_width=1, border_color=DANGER_COLOR, hover_color=DANGER_HOVER_COLOR, text_color=DANGER_COLOR, font=ctk.CTkFont(family="Helvetica", size=11, weight="bold"), command=lambda i=idx: self.remove_job(i))
                 remove_btn.pack(side="left", padx=5)
 
     def open_print_options(self):
