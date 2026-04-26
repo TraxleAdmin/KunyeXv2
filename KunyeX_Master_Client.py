@@ -1610,7 +1610,7 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         lbl_drop_title.pack(expand=True, pady=(10, 4))
         lbl_drop_subtitle = ctk.CTkLabel(
             drop_content,
-            text="veya seçmek için buraya tıklayın\nPDF, ODP, PNG ya da JPG açabilirsiniz",
+            text="veya seçmek için buraya tıklayın\nPDF, ODP, PPT, PNG ya da JPG açabilirsiniz",
             font=ctk.CTkFont(family="Segoe UI", size=11),
             text_color=TEXT_MUTED,
             justify="center",
@@ -2037,7 +2037,7 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         self.dropzone.bind("<Enter>", d_enter)
         self.dropzone.bind("<Leave>", d_leave)
         
-        lbl_drop = ctk.CTkLabel(self.dropzone, text="📥\nPDF / ODP / PNG / JPG\nSÜRÜKLEYİN", font=ctk.CTkFont(family="Helvetica", size=13, weight="bold"), text_color=TEXT_MUTED, justify="center")
+        lbl_drop = ctk.CTkLabel(self.dropzone, text="📥\nPDF / ODP / PPT / PNG / JPG\nSÜRÜKLEYİN", font=ctk.CTkFont(family="Helvetica", size=13, weight="bold"), text_color=TEXT_MUTED, justify="center")
         lbl_drop.pack(expand=True)
         lbl_drop.bind("<Enter>", d_enter)
         
@@ -2713,12 +2713,12 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
         else:
             files = raw_files.split()
             
-        valid_files = [f for f in files if f.lower().endswith(('.pdf', '.odp', '.png', '.jpg', '.jpeg'))]
+        valid_files = [f for f in files if f.lower().endswith(('.pdf', '.odp', '.ppt', '.pptx', '.png', '.jpg', '.jpeg'))]
         if valid_files:
             self.start_batch_processing(valid_files)
 
     def select_multiple_files(self):
-        files = filedialog.askopenfilenames(title="Dosya Seç", filetypes=[("Desteklenen Dosyalar", "*.pdf *.odp *.png *.jpg *.jpeg")])
+        files = filedialog.askopenfilenames(title="Dosya Seç", filetypes=[("Desteklenen Dosyalar", "*.pdf *.odp *.ppt *.pptx *.png *.jpg *.jpeg")])
         if files:
             self.start_batch_processing(files)
 
@@ -2966,6 +2966,91 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
                     except Exception:
                         job_data["_preview_retry"] = True
                         local_results.append({'job': job_data, 'pil': create_preview_placeholder("Onizleme hazirlanamadi", "Kaynak belge render edilemedi.")})
+
+                elif file_path.lower().endswith(('.odp', '.ppt', '.pptx')):
+                    try:
+                        import zipfile
+                        import io
+
+                        images_extracted = []
+                        with zipfile.ZipFile(file_path, 'r') as z:
+                            for filename in z.namelist():
+                                if filename.startswith(('Pictures/', 'ppt/media/')) and filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                                    image_data = z.read(filename)
+                                    try:
+                                        img = Image.open(io.BytesIO(image_data))
+                                        img.load() # ensure the image is fully read
+                                        images_extracted.append(img)
+                                    except: pass
+
+                        if images_extracted:
+                            for i, img in enumerate(images_extracted):
+                                extracted = []
+                                k_no = "KÜNYEX"
+                                a_baslik = "ÜRÜN ADI"
+                                birim_str = "(KG)"
+
+                                try:
+                                    from PIL import ImageOps
+                                    img = ImageOps.exif_transpose(img)
+                                except: pass
+
+                                optimized_img = optimize_image_for_ocr(img)
+                                izin_verilenler = "ABCDEFGHIJKLMNOPQRSTUVWXYZÇĞİÖŞÜabcdefghijklmnopqrstuvwxyzçğıöşü0123456789 /.-,()"
+                                custom_config = fr'--oem 3 --psm 6 -c tessedit_char_whitelist="{izin_verilenler}"'
+                                ocr_text = pytesseract.image_to_string(optimized_img, lang='tur', config=custom_config)
+                                extracted, k_no, a_baslik = parse_hks_blob(ocr_text)
+
+                                table_crop_pil = get_table_crop(img)
+
+                                for k, v in extracted:
+                                    key_str = tr_upper(k)
+                                    if "MİKTAR" in key_str or "MIKTAR" in key_str:
+                                        val_str = tr_upper(v)
+                                        if "ADET" in val_str: birim_str = "(ADET)"
+                                        elif "BAĞ" in val_str or "BAG" in val_str: birim_str = "(ADET)"
+                                        elif "KASA" in val_str: birim_str = "(KASA)"
+
+                                a_baslik = resolve_product_title(a_baslik, extracted)
+                                clean_title = a_baslik.strip().upper().replace("İ", "I").replace("Ç", "C").replace("Ş", "S").replace("Ğ", "G").replace("Ü", "U").replace("Ö", "O")
+                                final_price, final_label_type = find_smart_price_match(clean_title, self.external_stm_data)
+
+                                rnd_id = random.randint(1000, 9999)
+                                ext = file_path.split('.')[-1].upper()
+                                job_data = {
+                                    'table_img_pil': table_crop_pil,
+                                    'extracted': extracted,
+                                    'kunye_no': k_no,
+                                    'ana_baslik': a_baslik,
+                                    'file': f"{ext}_{rnd_id}",
+                                    'custom_unit': birim_str,
+                                    'price': final_price,
+                                    'price_offset_y': 0,
+                                    'price_font_size': 95,
+                                    'label_type': final_label_type,
+                                    'layout_style': 'left' if table_crop_pil else 'bottom',
+                                    'title_offset_y': 0,
+                                    'unit_offset_y': 0,
+                                    'logo_offset_y': 0,
+                                    'title_font_size': 0,
+                                    'title_font_style': 'Arial-Black',
+                                    'unit_font_size': 60
+                                }
+                                save_kunye_to_memory(job_data)
+
+                                try:
+                                    temp_name = f"preview_{uuid.uuid4().hex[:8]}.pdf"
+                                    preview_pil = self.print_engine.generate_preview_image(job_data, temp_name, current_size, dpi=72)
+                                    job_data["_preview_retry"] = False
+                                    local_results.append({'job': job_data, 'pil': preview_pil})
+                                except Exception:
+                                    job_data["_preview_retry"] = True
+                                    try:
+                                        local_results.append({'job': job_data, 'pil': create_preview_placeholder("Onizleme hazirlanamadi", "Kaynak belge render edilemedi.")})
+                                    except:
+                                        local_results.append({'job': job_data, 'pil': Image.new('RGB', (600, 404), color=(43, 45, 49))})
+                    except Exception as e:
+                        print("Error processing presentation:", e)
 
                 elif file_path.lower().endswith('.pdf'):
                     images_for_crop = None
