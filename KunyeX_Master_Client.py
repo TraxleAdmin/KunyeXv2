@@ -2858,18 +2858,30 @@ class KunyeXPremiumClient(ctk.CTk, TkinterDnD.DnDWrapper):
             return ext_list, k_no, m_adi
 
         def optimize_image_for_ocr(pil_img):
+            # 🔥 MÜDAHALE: Şeffaf (Alpha) veya Kes-Yapıştır görüntülerin siyah çıkmasını engellemek için beyaz arka plan bas.
+            if pil_img.mode in ('RGBA', 'LA') or (pil_img.mode == 'P' and 'transparency' in pil_img.info):
+                alpha = pil_img.convert('RGBA').split()[-1]
+                bg = Image.new("RGBA", pil_img.size, (255, 255, 255, 255))
+                bg.paste(pil_img, mask=alpha)
+                pil_img = bg.convert('RGB')
+            else:
+                pil_img = pil_img.convert('RGB')
+
             cv_img = np.array(pil_img)
             if len(cv_img.shape) == 3:
-                if cv_img.shape[2] == 4: 
-                    cv_img = cv2.cvtColor(cv_img, cv2.COLOR_RGBA2GRAY)
-                else: 
-                    cv_img = cv2.cvtColor(cv_img, cv2.COLOR_RGB2GRAY)
+                cv_img = cv2.cvtColor(cv_img, cv2.COLOR_RGB2GRAY)
+
+            # Küçük görseller için çözünürlük arttırıcı padding
+            cv_img = cv2.copyMakeBorder(cv_img, 50, 50, 50, 50, cv2.BORDER_CONSTANT, value=[255, 255, 255])
+
+            # Gelişmiş Binarization & Thresholding
             cv_img = cv2.resize(cv_img, None, fx=4.0, fy=4.0, interpolation=cv2.INTER_CUBIC)
             cv_img = cv2.GaussianBlur(cv_img, (5, 5), 0)
             cv_img = cv2.normalize(cv_img, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
             cv_img = cv2.adaptiveThreshold(cv_img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 2)
             kernel = np.ones((2, 2), np.uint8)
             cv_img = cv2.morphologyEx(cv_img, cv2.MORPH_CLOSE, kernel)
+
             return Image.fromarray(cv_img)
 
         def get_table_crop(pil_img):
